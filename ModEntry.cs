@@ -8,18 +8,14 @@ namespace BulkMachines
 {
     public class ModEntry : Mod
     {
-        internal static IMonitor ModMonitor;
-        internal const string ModDataKey = "SeuNome.BulkAmount";
-
         public override void Entry(IModHelper helper)
         {
-            ModMonitor = this.Monitor;
             var harmony = new Harmony(this.ModManifest.UniqueID);
             harmony.PatchAll();
         }
     }
 
-    // --- PATCH 1: Colocação do Item ---
+    // --- PATCH ÚNICO: Conta o inventário e altera a saída na hora da colocação ---
     [HarmonyPatch]
     public static class MachineInputPatch
     {
@@ -29,90 +25,34 @@ namespace BulkMachines
                 .FirstOrDefault(m => m.Name == "performObjectDropInAction" && m.GetParameters().Length >= 3);
         }
 
-        // Prefix roda ANTES do jogo consumir o item. Contamos a quantidade total aqui.
-        static void Prefix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref int __state)
+        static void Postfix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref bool __result)
         {
-            if (probe || who == null || dropInItem == null) return;
-            
-            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
-            {
-                // Salva a quantidade total no inventário (ex: 1, 2, 5, 10...)
-                __state = who.Items.CountId(dropInItem.QualifiedItemId);
-            }
-        }
-
-        static void Postfix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref bool __result, int __state)
-        {
+            // Se for apenas teste, falhou, ou não tem jogador, ignora.
             if (probe || !__result || who == null || dropInItem == null) return;
 
+            // (BC)16 = Prensa de Queijo | (BC)24 = Máquina de Maionese
             if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
             {
+                // Se a máquina ligou e começou a processar
                 if (__instance.heldObject.Value != null && !__instance.readyForHarvest.Value)
                 {
-                    __instance.modData.Remove(ModEntry.ModDataKey);
-
-                    // O jogo já consumiu 1 item. Queremos processar até 5.
-                    int totalToProcess = Math.Min(5, __state);
-                    int extraToConsume = totalToProcess - 1; // O jogo já consumiu 1.
+                    // O jogo já consumiu 1 item. Vamos ver quantos sobraram no inventário AGORA.
+                    int currentInventory = who.Items.CountId(dropInItem.QualifiedItemId);
+                    
+                    // Pega até 4 itens extras (para totalizar 5)
+                    int extraToConsume = Math.Min(4, Math.Max(0, currentInventory));
+                    int totalToProcess = 1 + extraToConsume;
 
                     if (extraToConsume > 0)
                     {
+                        // Remove os itens extras do inventário
                         who.Items.ReduceId(dropInItem.QualifiedItemId, extraToConsume);
-                        __instance.modData[ModEntry.ModDataKey] = totalToProcess.ToString();
                     }
-                    else
-                    {
-                        __instance.modData[ModEntry.ModDataKey] = "1";
-                    }
+                    
+                    // A MÁGICA: Altera a quantidade do item de saída DIRETAMENTE na máquina.
+                    // Quando a máquina terminar, ela vai cuspir essa quantidade exata.
+                    __instance.heldObject.Value.Stack = totalToProcess;
                 }
-            }
-        }
-    }
-
-    // --- PATCH 2: Modifica a saída na hora da colheita ---
-    [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.checkForAction))]
-    public static class MachineOutputPatch
-    {
-        static void Prefix(StardewValley.Object __instance, Farmer who, bool justCheckingForActivity)
-        {
-            if (justCheckingForActivity || !__instance.readyForHarvest.Value || __instance.heldObject.Value == null) return;
-
-            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
-            {
-                if (__instance.modData.TryGetValue(ModEntry.ModDataKey, out string amountStr) && int.TryParse(amountStr, out int amount))
-                {
-                    __instance.heldObject.Value.Stack = amount;
-                }
-            }
-        }
-
-        static void Postfix(StardewValley.Object __instance, Farmer who, bool justCheckingForActivity)
-        {
-            if (!justCheckingForActivity && __instance.heldObject.Value == null)
-            {
-                __instance.modData.Remove(ModEntry.ModDataKey);
-            }
-        }
-    }
-
-    // --- PATCH 3 e 4: Limpezas de segurança ---
-    [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.performRemoveAction))]
-    public static class MachineRemovePatch
-    {
-        static void Postfix(StardewValley.Object __instance)
-        {
-            __instance.modData.Remove(ModEntry.ModDataKey);
-        }
-    }
-
-    [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.DayUpdate))]
-    public static class MachineDayUpdatePatch
-    {
-        static void Postfix(StardewValley.Object __instance)
-        {
-            if (__instance.heldObject.Value == null)
-            {
-                __instance.modData.Remove(ModEntry.ModDataKey);
             }
         }
     }
