@@ -1,0 +1,9 @@
+{
+  "Name": "Bulk Artisan Machines",
+  "Author": "SeuNome",
+  "Version": "1.0.0",
+  "Description": "Permite colocar ate 5 itens de uma vez na Prensa de Queijo e na Maquina de Maionese.",
+  "UniqueID": "SeuNome.BulkMachines",
+  "EntryDll": "BulkMachines.dll",
+  "MinimumApiVersion": "4.0.0"
+}
