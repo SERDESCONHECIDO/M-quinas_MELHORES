@@ -1,4 +1,5 @@
 using System;
+using System.Linq; // CORREÇÃO 1: Adicionado para o FirstOrDefault funcionar
 using HarmonyLib;
 using StardewModdingAPI;
 using StardewValley;
@@ -16,6 +17,25 @@ namespace BulkMachines
             var harmony = new Harmony(this.ModManifest.UniqueID);
             harmony.PatchAll();
         }
+
+        // Função manual para consumir itens (substitui o removeItemsFromInventory)
+        internal static void ConsumeItems(Farmer who, string itemId, int count)
+        {
+            if (who == null) return;
+
+            int remaining = count;
+            for (int i = 0; i < who.Items.Count && remaining > 0; i++)
+            {
+                var item = who.Items[i];
+                if (item != null && item.QualifiedItemId == itemId)
+                {
+                    int take = Math.Min(item.Stack, remaining);
+                    item.Stack -= take;
+                    remaining -= take;
+                    if (item.Stack <= 0) who.Items[i] = null;
+                }
+            }
+        }
     }
 
     // --- PATCH 1: Colocação do Item ---
@@ -30,14 +50,14 @@ namespace BulkMachines
 
         static void Postfix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref bool __result)
         {
-            if (probe || !__result || who == null || dropInItem == null) return; 
+            if (probe || !__result || who == null || dropInItem == null) return;
 
             // (BC)16 = Prensa de Queijo | (BC)19 = Máquina de Maionese
             if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)19")
             {
                 if (__instance.heldObject.Value != null && !__instance.readyForHarvest.Value)
                 {
-                    __instance.modData.Remove(ModEntry.ModDataKey); 
+                    __instance.modData.Remove(ModEntry.ModDataKey);
 
                     int extraAvailable = 0;
                     foreach (var item in who.Items)
@@ -49,11 +69,11 @@ namespace BulkMachines
                     }
 
                     int toConsume = Math.Min(4, extraAvailable);
-                    
+
                     if (toConsume > 0)
                     {
-                        // Usa a função nativa do SMAPI para remover os itens extras
-                        who.removeItemsFromInventory(dropInItem.QualifiedItemId, toConsume);
+                        // CORREÇÃO 2: Usa a função manual ConsumeItems em vez do método inexistente
+                        ModEntry.ConsumeItems(who, dropInItem.QualifiedItemId, toConsume);
                         __instance.modData[ModEntry.ModDataKey] = (1 + toConsume).ToString();
                     }
                     else
@@ -73,12 +93,11 @@ namespace BulkMachines
         {
             if (justCheckingForActivity || !__instance.readyForHarvest.Value || __instance.heldObject.Value == null) return;
 
-            // (BC)16 = Prensa de Queijo | (BC)19 = Máquina de Maionese
             if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)19")
             {
                 if (__instance.modData.TryGetValue(ModEntry.ModDataKey, out string amountStr) && int.TryParse(amountStr, out int amount))
                 {
-                    __instance.heldObject.Value.Stack = amount; 
+                    __instance.heldObject.Value.Stack = amount;
                 }
             }
         }
