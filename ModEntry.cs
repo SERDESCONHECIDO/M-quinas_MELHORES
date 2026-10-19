@@ -29,26 +29,36 @@ namespace BulkMachines
                 .FirstOrDefault(m => m.Name == "performObjectDropInAction" && m.GetParameters().Length >= 3);
         }
 
-        static void Postfix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref bool __result)
+        // Prefix roda ANTES do jogo consumir o item. Contamos a quantidade total aqui.
+        static void Prefix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref int __state)
+        {
+            if (probe || who == null || dropInItem == null) return;
+            
+            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
+            {
+                // Salva a quantidade total no inventário (ex: 1, 2, 5, 10...)
+                __state = who.Items.CountId(dropInItem.QualifiedItemId);
+            }
+        }
+
+        static void Postfix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref bool __result, int __state)
         {
             if (probe || !__result || who == null || dropInItem == null) return;
 
-            // (BC)16 = Prensa de Queijo | (BC)24 = Máquina de Maionese
             if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
             {
                 if (__instance.heldObject.Value != null && !__instance.readyForHarvest.Value)
                 {
                     __instance.modData.Remove(ModEntry.ModDataKey);
 
-                    // Usa o método nativo da 1.6 para contar e reduzir a pilha
-                    int extraAvailable = who.Items.CountId(dropInItem.QualifiedItemId) - 1;
-                    int toConsume = Math.Min(4, Math.Max(0, extraAvailable));
+                    // O jogo já consumiu 1 item. Queremos processar até 5.
+                    int totalToProcess = Math.Min(5, __state);
+                    int extraToConsume = totalToProcess - 1; // O jogo já consumiu 1.
 
-                    if (toConsume > 0)
+                    if (extraToConsume > 0)
                     {
-                        // REDUZ a pilha diretamente, imune a mods de empilhamento
-                        who.Items.ReduceId(dropInItem.QualifiedItemId, toConsume);
-                        __instance.modData[ModEntry.ModDataKey] = (1 + toConsume).ToString();
+                        who.Items.ReduceId(dropInItem.QualifiedItemId, extraToConsume);
+                        __instance.modData[ModEntry.ModDataKey] = totalToProcess.ToString();
                     }
                     else
                     {
@@ -85,7 +95,7 @@ namespace BulkMachines
         }
     }
 
-    // --- PATCH 3 e 4: Limpezas de segurança (Picareta e Dia) ---
+    // --- PATCH 3 e 4: Limpezas de segurança ---
     [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.performRemoveAction))]
     public static class MachineRemovePatch
     {
