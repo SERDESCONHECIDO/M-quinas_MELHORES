@@ -15,6 +15,7 @@ namespace BulkMachines
         }
     }
 
+    // --- PATCH 1: Conta a quantidade na pilha ANTES de o jogo consumir ---
     [HarmonyPatch]
     public static class MachineInputPatch
     {
@@ -24,7 +25,19 @@ namespace BulkMachines
                 .FirstOrDefault(m => m.Name == "performObjectDropInAction" && m.GetParameters().Length >= 3);
         }
 
-        static void Postfix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref bool __result)
+        static void Prefix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, out int __state)
+        {
+            __state = 0;
+            if (probe || who == null || dropInItem == null) return;
+
+            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
+            {
+                // Salva a quantidade EXATA da pilha que está sendo colocada
+                __state = dropInItem.Stack;
+            }
+        }
+
+        static void Postfix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref bool __result, int __state)
         {
             if (probe || !__result || who == null || dropInItem == null) return;
 
@@ -32,57 +45,53 @@ namespace BulkMachines
             {
                 if (__instance.heldObject.Value != null && !__instance.readyForHarvest.Value)
                 {
-                    __instance.modData.Remove("BulkAmount");
+                    // O jogo consumiu 1. Vamos consumir os extras até o limite de 5.
+                    int totalToProcess = Math.Min(5, Math.Max(1, __state));
+                    int extraToConsume = totalToProcess - 1;
 
-                    int available = dropInItem.Stack;
-                    int toConsume = Math.Min(4, Math.Max(0, available - 1));
-
-                    if (toConsume > 0)
+                    if (extraToConsume > 0)
                     {
-                        who.Items.ReduceId(dropInItem.QualifiedItemId, toConsume);
+                        who.Items.ReduceId(dropInItem.QualifiedItemId, extraToConsume);
                     }
 
-                    int totalOutput = 1 + toConsume;
-                    __instance.modData["BulkAmount"] = totalOutput.ToString();
+                    // Salva a quantidade total a ser entregue (1 do jogo + extras)
+                    __instance.modData["BulkAmount"] = totalToProcess.ToString();
                 }
             }
         }
     }
 
+    // --- PATCH 2: Entrega os itens extras DEPOIS que o jogo deu o item original ---
     [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.checkForAction))]
     public static class HarvestPatch
     {
-        static bool Prefix(StardewValley.Object __instance, Farmer who, bool justCheckingForActivity, ref bool __result)
+        static void Postfix(StardewValley.Object __instance, Farmer who, bool justCheckingForActivity)
         {
-            if (justCheckingForActivity || !__instance.readyForHarvest.Value || __instance.heldObject.Value == null) return true;
+            if (justCheckingForActivity || who == null) return;
+            if (__instance.heldObject.Value != null || __instance.readyForHarvest.Value) return;
 
             if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
             {
-                int amount = 1;
-                if (__instance.modData.TryGetValue("BulkAmount", out string amountStr))
+                if (__instance.modData.TryGetValue("BulkAmount", out string amountStr) && int.TryParse(amountStr, out int amount))
                 {
-                    int.TryParse(amountStr, out amount);
                     __instance.modData.Remove("BulkAmount");
+
+                    int extras = amount - 1;
+                    if (extras > 0)
+                    {
+                        // (O)424 = Queijo | (O)306 = Maionese
+                        string outputId = __instance.QualifiedItemId == "(BC)16" ? "(O)424" : "(O)306";
+                        for (int i = 0; i < extras; i++)
+                        {
+                            who.addItemToInventory(ItemRegistry.Create(outputId));
+                        }
+                    }
                 }
-
-                for (int i = 0; i < amount; i++)
-                {
-                    if (who != null) who.addItemToInventory(__instance.heldObject.Value.getOne());
-                }
-
-                __instance.heldObject.Value = null;
-                __instance.readyForHarvest.Value = false;
-                __instance.minutesUntilReady.Value = 0;
-
-                if (who != null) who.currentLocation.playSound("coin");
-
-                __result = true;
-                return false;
             }
-            return true;
         }
     }
 
+    // --- PATCH 3: Limpeza ao quebrar a máquina ---
     [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.performRemoveAction))]
     public static class MachineRemovePatch
     {
