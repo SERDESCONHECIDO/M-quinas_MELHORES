@@ -1,5 +1,5 @@
 using System;
-using System.Linq; // CORREÇÃO 1: Adicionado para o FirstOrDefault funcionar
+using System.Linq;
 using HarmonyLib;
 using StardewModdingAPI;
 using StardewValley;
@@ -17,25 +17,6 @@ namespace BulkMachines
             var harmony = new Harmony(this.ModManifest.UniqueID);
             harmony.PatchAll();
         }
-
-        // Função manual para consumir itens (substitui o removeItemsFromInventory)
-        internal static void ConsumeItems(Farmer who, string itemId, int count)
-        {
-            if (who == null) return;
-
-            int remaining = count;
-            for (int i = 0; i < who.Items.Count && remaining > 0; i++)
-            {
-                var item = who.Items[i];
-                if (item != null && item.QualifiedItemId == itemId)
-                {
-                    int take = Math.Min(item.Stack, remaining);
-                    item.Stack -= take;
-                    remaining -= take;
-                    if (item.Stack <= 0) who.Items[i] = null;
-                }
-            }
-        }
     }
 
     // --- PATCH 1: Colocação do Item ---
@@ -52,28 +33,21 @@ namespace BulkMachines
         {
             if (probe || !__result || who == null || dropInItem == null) return;
 
-            // (BC)16 = Prensa de Queijo | (BC)19 = Máquina de Maionese
-            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)19")
+            // (BC)16 = Prensa de Queijo | (BC)24 = Máquina de Maionese
+            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
             {
                 if (__instance.heldObject.Value != null && !__instance.readyForHarvest.Value)
                 {
                     __instance.modData.Remove(ModEntry.ModDataKey);
 
-                    int extraAvailable = 0;
-                    foreach (var item in who.Items)
-                    {
-                        if (item != null && item.QualifiedItemId == dropInItem.QualifiedItemId)
-                        {
-                            extraAvailable += item.Stack;
-                        }
-                    }
-
-                    int toConsume = Math.Min(4, extraAvailable);
+                    // Usa o método nativo da 1.6 para contar e reduzir a pilha
+                    int extraAvailable = who.Items.CountId(dropInItem.QualifiedItemId) - 1;
+                    int toConsume = Math.Min(4, Math.Max(0, extraAvailable));
 
                     if (toConsume > 0)
                     {
-                        // CORREÇÃO 2: Usa a função manual ConsumeItems em vez do método inexistente
-                        ModEntry.ConsumeItems(who, dropInItem.QualifiedItemId, toConsume);
+                        // REDUZ a pilha diretamente, imune a mods de empilhamento
+                        who.Items.ReduceId(dropInItem.QualifiedItemId, toConsume);
                         __instance.modData[ModEntry.ModDataKey] = (1 + toConsume).ToString();
                     }
                     else
@@ -93,7 +67,7 @@ namespace BulkMachines
         {
             if (justCheckingForActivity || !__instance.readyForHarvest.Value || __instance.heldObject.Value == null) return;
 
-            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)19")
+            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)24")
             {
                 if (__instance.modData.TryGetValue(ModEntry.ModDataKey, out string amountStr) && int.TryParse(amountStr, out int amount))
                 {
@@ -111,26 +85,22 @@ namespace BulkMachines
         }
     }
 
-    // --- PATCH 3: Limpeza ao quebrar a máquina ---
+    // --- PATCH 3 e 4: Limpezas de segurança (Picareta e Dia) ---
     [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.performRemoveAction))]
     public static class MachineRemovePatch
     {
         static void Postfix(StardewValley.Object __instance)
         {
-            if (__instance.modData.ContainsKey(ModEntry.ModDataKey))
-            {
-                __instance.modData.Remove(ModEntry.ModDataKey);
-            }
+            __instance.modData.Remove(ModEntry.ModDataKey);
         }
     }
 
-    // --- PATCH 4: Limpeza diária (Failsafe contra o Automate) ---
     [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.DayUpdate))]
     public static class MachineDayUpdatePatch
     {
         static void Postfix(StardewValley.Object __instance)
         {
-            if (__instance.heldObject.Value == null && __instance.modData.ContainsKey(ModEntry.ModDataKey))
+            if (__instance.heldObject.Value == null)
             {
                 __instance.modData.Remove(ModEntry.ModDataKey);
             }
