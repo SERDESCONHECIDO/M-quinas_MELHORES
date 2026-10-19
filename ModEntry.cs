@@ -16,35 +16,24 @@ namespace BulkMachines
             var harmony = new Harmony(this.ModManifest.UniqueID);
             harmony.PatchAll();
         }
-
-        internal static void ConsumeItems(Farmer who, string itemId, int count)
-        {
-            if (who == null) return; 
-
-            int remaining = count;
-            for (int i = 0; i < who.Items.Count && remaining > 0; i++)
-            {
-                var item = who.Items[i];
-                if (item != null && item.QualifiedItemId == itemId)
-                {
-                    int take = Math.Min(item.Stack, remaining);
-                    item.Stack -= take;
-                    remaining -= take;
-                    if (item.Stack <= 0) who.Items[i] = null;
-                }
-            }
-        }
     }
 
     // --- PATCH 1: Colocação do Item ---
-    [HarmonyPatch(typeof(StardewValley.Object), nameof(StardewValley.Object.performObjectDropInAction))]
+    [HarmonyPatch]
     public static class MachineInputPatch
     {
+        static System.Reflection.MethodBase TargetMethod()
+        {
+            return AccessTools.GetDeclaredMethods(typeof(StardewValley.Object))
+                .FirstOrDefault(m => m.Name == "performObjectDropInAction" && m.GetParameters().Length >= 3);
+        }
+
         static void Postfix(StardewValley.Object __instance, Item dropInItem, bool probe, Farmer who, ref bool __result)
         {
-            if (probe || !__result || who == null) return; 
+            if (probe || !__result || who == null || dropInItem == null) return; 
 
-            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)17")
+            // (BC)16 = Prensa de Queijo | (BC)19 = Máquina de Maionese
+            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)19")
             {
                 if (__instance.heldObject.Value != null && !__instance.readyForHarvest.Value)
                 {
@@ -63,7 +52,8 @@ namespace BulkMachines
                     
                     if (toConsume > 0)
                     {
-                        ModEntry.ConsumeItems(who, dropInItem.QualifiedItemId, toConsume);
+                        // Usa a função nativa do SMAPI para remover os itens extras
+                        who.removeItemsFromInventory(dropInItem.QualifiedItemId, toConsume);
                         __instance.modData[ModEntry.ModDataKey] = (1 + toConsume).ToString();
                     }
                     else
@@ -83,7 +73,8 @@ namespace BulkMachines
         {
             if (justCheckingForActivity || !__instance.readyForHarvest.Value || __instance.heldObject.Value == null) return;
 
-            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)17")
+            // (BC)16 = Prensa de Queijo | (BC)19 = Máquina de Maionese
+            if (__instance.QualifiedItemId == "(BC)16" || __instance.QualifiedItemId == "(BC)19")
             {
                 if (__instance.modData.TryGetValue(ModEntry.ModDataKey, out string amountStr) && int.TryParse(amountStr, out int amount))
                 {
